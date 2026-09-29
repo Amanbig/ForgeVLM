@@ -15,8 +15,11 @@ class VisionTransformer(nn.Module):
         ])
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-
         self.pos_embedding = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+
+        nn.init.normal_(self.cls_token, std=0.02)
+        nn.init.normal_(self.pos_embedding, std=0.02)
+
         self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x):
