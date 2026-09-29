@@ -1,23 +1,14 @@
 import torch.nn.functional as F
 
 
-def next_token_loss(logits, token_ids):
-    """Predict each text token from the position just before it.
+def next_token_loss(logits, labels):
+    """Predict the next id. Positions marked -100 are left out of the loss.
 
-    Image tokens, if present, occupy the front of `logits` and are left out of the loss.
+    `labels` lines up with `logits`. The shift means position t is scored against labels[t + 1].
     """
 
-    n_text = token_ids.size(1)
-    n_prefix = logits.size(1) - n_text
-
-    if n_prefix == 0:
-        predicting = logits[:, :-1, :]
-        targets = token_ids[:, 1:]
-    else:
-        predicting = logits[:, n_prefix - 1:-1, :]
-        targets = token_ids
-
     return F.cross_entropy(
-        predicting.reshape(-1, predicting.size(-1)),
-        targets.reshape(-1),
+        logits[:, :-1, :].reshape(-1, logits.size(-1)),
+        labels[:, 1:].reshape(-1),
+        ignore_index=-100,
     )
