@@ -256,3 +256,10 @@ python -m train.train_vqvae
 # Expected: Gen loss falls from ~18.2 -> 0.0002; generates visual tokens and decodes RGB image
 python -m train.train_generation
 ```
+
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
