@@ -1,180 +1,258 @@
-# ForgeVLM
+# ForgeVLM: From Attention to Modern Multimodal Foundation Models
 
-A from-scratch path from attention to modern multimodal foundation models: image understanding, video understanding, and multimodal generation. Each file is one idea. Read them in order, then run the training scripts. They memorize one random or synthetic batch. A falling loss means the wiring is right.
+> **A from-scratch, zero-black-box curriculum for understanding modern Vision-Language Models (VLMs), Video Understanding, and Multimodal Generation.**
+>
+> Every file is exactly **one concept**. Every tensor transformation is documented step-by-step with shapes. Read the files in order, run the verification scripts, and watch the loss fall to zero.
 
-Run everything from the repo root.
+---
+
+## Quickstart
+
+No heavy GPU or 50GB dataset downloads required. Everything runs locally on **CPU** in seconds.
 
 ```bash
+# 1. Install dependencies
 pip install -r requirements.txt
-python -m train.train_clip
-python -m train.train_vlm
-python -m train.train_modern_vlm
-python -m train.train_video
-python -m train.train_vqvae
-python -m train.train_generation
+
+# 2. Run the 6 core training scripts
+python -m train.train_clip          # Stage 2: CLIP & SigLIP image-text alignment
+python -m train.train_vlm           # Stage 3: Vision-Language Model image QA
+python -m train.train_modern_vlm    # Stage 3: Modern VLM with 4x spatial merge reduction
+python -m train.train_video         # Stage 4: Video VLM multi-frame temporal reasoning
+python -m train.train_vqvae         # Stage 5: VQ-VAE discrete visual codebook reconstruction
+python -m train.train_generation    # Stage 5: Unified text-to-image autoregressive generation
 ```
 
-CPU is enough. These models are tiny on purpose.
-
-## Map
-
-| Order | File | What it is |
-| --- | --- | --- |
-| 1 | `attention/self_attention.py` | One attention head, causal mask, projection |
-| 2 | `attention/multi_head_attention.py` | Split into heads, supports self & cross-attention masks |
-| 3 | `attention/rope.py` | 1D, 2D (spatial), and 3D (spatio-temporal) Rotary Position Embeddings |
-| 4 | `transformer/transformer.py` | Pre-norm block: attention, residual, MLP, residual |
-| 5 | `embedding/patch_embedding.py` | Image to a sequence of patch vectors |
-| 6 | `transformer/vision_transformer.py` | ViT classifier with initialized class and position vectors |
-| 7 | `embedding/clip.py` | CLIP image encoder. Same stem as the ViT, returns a vector |
-| 8 | `embedding/token_embedding.py` | Token ids to vectors, plus a position |
-| 9 | `transformer/text_transformer.py` | CLIP text encoder. Causal. Reads the end-of-text token |
-| 10 | `model/model.py` | CLIP. Both towers, a shared space, scaled cosine logits |
-| 11 | `loss/contrastive.py` | CLIP loss. Symmetric cross-entropy |
-| 12 | `loss/siglip.py` | SigLIP loss. A sigmoid on every pair |
-| 13 | `model/projector.py` | MLP, 2x2 SpatialMerge (LLaVA-NeXT), and Perceiver Resampler |
-| 14 | `model/dynamic_resolution.py` | AnyRes multi-crop image slicing and spatial newline tokens |
-| 15 | `model/language_model.py` | Small causal language model |
-| 16 | `model/vlm.py` | Vision tokens prefixed onto the language model (LLaVA-1.0 style) |
-| 17 | `model/modern_vlm.py` | Modern VLM with 4x token reduction via 2x2 spatial merging |
-| 18 | `embedding/video_embedding.py` | 3D tubelet convolutions for spatio-temporal video encoding |
-| 19 | `model/video_vlm.py` | Video VLM for temporal reasoning and video question-answering |
-| 20 | `embedding/vq.py` | Vector Quantizer with codebook & straight-through estimator |
-| 21 | `model/vqvae.py` | VQ-VAE for discrete visual tokenization and pixel decoding |
-| 22 | `loss/vq_loss.py` | VQ-VAE reconstruction MSE and commitment loss |
-| 23 | `model/generative_vlm.py` | Unified autoregressive multimodal generator (Chameleon/Show-o style) |
-| 24 | `model/flow_matching.py` | Continuous generation head using Flow Matching (Transfusion/DiT style) |
-| 25 | `loss/next_token.py` | Predict the next text or visual token |
-| 26 | `data/tokenizer.py` | From-scratch character and special token tokenizer |
-| 27 | `data/dataset.py` | Synthetic image and video datasets with geometric shapes |
-| 28 | `train/train_clip.py` | Memorize one batch with CLIP, then with SigLIP |
-| 29 | `train/train_vlm.py` | Memorize one batch with basic VLM |
-| 30 | `train/train_modern_vlm.py` | Memorize one batch with Modern VLM (4x token reduction) |
-| 31 | `train/train_video.py` | Memorize video temporal dynamics with Video VLM |
-| 32 | `train/train_vqvae.py` | Reconstruct images from discrete codebook tokens |
-| 33 | `train/train_generation.py` | Text-to-image autoregressive visual generation |
-
 ---
 
-## Part 1: Attention & Transformers
+## The Learning Roadmap
 
-### `attention/self_attention.py` & `attention/multi_head_attention.py`
-`SelfAttention` and `MultiHeadAttention` project input tokens into queries, keys, and values.
-Scores are scaled by $1 / \sqrt{d_k}$, masked, and softened into attention weights before multiplying values.
-`MultiHeadAttention` supports:
-- Self-attention (queries and keys from the same sequence)
-- Cross-attention (queries attend to external context keys/values)
-- Arbitrary masks on the correct tensor device.
-
-### `attention/rope.py`
-Modern LLMs (Llama 3, Qwen 2) and modern VLMs (Qwen2-VL) replace absolute position embeddings with Rotary Position Embeddings (RoPE).
-- **1D RoPE**: Rotates query and key sub-dimensions by complex angles corresponding to sequence index.
-- **2D Spatial RoPE**: Splits head dimension into $(h, w)$ halves to preserve 2D grid coordinates.
-- **3D Spatio-Temporal RoPE**: Splits head dimension into $(t, h, w)$ thirds to preserve time, height, and width coordinates.
-
-### `transformer/transformer.py`
-Pre-norm block: `LayerNorm -> MultiheadAttention -> Residual -> LayerNorm -> MLP -> Residual`.
-Takes an optional `attn_mask` (e.g. `causal_mask` for autoregressive language, `prefix_mask` for vision-to-language).
-
----
-
-## Part 2: Vision Encoders & Contrastive Alignment (CLIP & SigLIP)
-
-### `embedding/patch_embedding.py` & `transformer/vision_transformer.py`
-An image $(C, H, W)$ is sliced into non-overlapping patches by a 2D convolution with `kernel_size = stride = patch_size`.
-`VisionTransformer` prepends a learned `cls_token`, adds `pos_embedding`, and passes through transformer blocks.
-
-### `embedding/clip.py` & `transformer/text_transformer.py`
-- `CLIPEncoder` removes the classifier head and layer-norms the output. `forward_tokens` returns all patches; `forward` returns the class token.
-- `TextTransformer` uses causal masking and extracts the vector at the end-of-text position found via `argmax`.
-
-### `model/model.py`, `loss/contrastive.py`, `loss/siglip.py`
-- **CLIP**: Projects image and text features into a shared dimension and L2-normalizes them.
-  Trained with symmetric cross-entropy: image $i$ picks text $i$, and text $i$ picks image $i$.
-- **SigLIP**: Replaces the global softmax with independent sigmoid decisions for every pair. True pair is $+1$, all negative pairs are $-1$. Eliminates cross-device batch coupling.
-
----
-
-## Part 3: Vision-Language Models (Understanding Images)
-
-### `model/projector.py`
-Maps visual features into the language model's embedding width:
-1. `Projector`: 2-layer MLP (`Linear -> GELU -> Linear`).
-2. `SpatialMergeProjector`: Groups $2 \times 2$ neighboring patches into 1 vector of width $4 \times D$ (pixel unshuffle) before projection. Compresses visual sequence length by $4\times$ while keeping high detail.
-3. `PerceiverResampler`: Fixed number of learned query tokens cross-attend to visual tokens, compressing arbitrary visual sequences into a fixed budget.
-
-### `model/dynamic_resolution.py`
-AnyRes / Dynamic Resolution (LLaVA-NeXT style):
-Slices large images into a grid of standard-sized tiles plus a global overview tile. Appends a learned `<image_newline>` token at the end of each patch row so the language model retains 2D spatial coordinates.
-
-### `model/vlm.py` & `model/modern_vlm.py`
-Combines vision and language:
 ```
-Text:   [BOS, USER, <image>, "What is this?", ASSISTANT]
-Vision: [patch_1, patch_2, ..., patch_N]
-Merged: [BOS, USER, patch_1, ..., patch_N, "What is this?", ASSISTANT]
-Target: Predict the assistant's answer autoregressively.
++-------------------------------------------------------------------------------------------------+
+|                                     STAGE 1: FOUNDATIONS                                        |
+|  Self-Attention ---> Multi-Head Attention ---> Rotary Embeddings (RoPE) ---> Transformer Block  |
++-------------------------------------------------------------------------------------------------+
+                                                 |
+                                                 v
++-------------------------------------------------------------------------------------------------+
+|                               STAGE 2: CONTRASTIVE ALIGNMENT                                    |
+|   Patch Embedding ---> Vision Transformer (ViT) ---> CLIP Dual Towers ---> SigLIP Sigmoid Loss   |
++-------------------------------------------------------------------------------------------------+
+                                                 |
+                                                 v
++-------------------------------------------------------------------------------------------------+
+|                             STAGE 3: MODERN IMAGE UNDERSTANDING                                 |
+|  2x2 Spatial Merge (LLaVA-NeXT) ---> Dynamic AnyRes Tiling ---> Autoregressive VLM (Image QA)  |
++-------------------------------------------------------------------------------------------------+
+                                                 |
+                                                 v
++-------------------------------------------------------------------------------------------------+
+|                                 STAGE 4: VIDEO UNDERSTANDING                                    |
+|  3D Tubelet Convolutions ---> Spatio-Temporal RoPE ---> Video-Language Model (Action QA)        |
++-------------------------------------------------------------------------------------------------+
+                                                 |
+                                                 v
++-------------------------------------------------------------------------------------------------+
+|                                STAGE 5: MULTIMODAL GENERATION                                   |
+|  Vector Quantizer (VQ-VAE) ---> Unified Autoregressive Gen (Chameleon) ---> Flow Matching (DiT) |
++-------------------------------------------------------------------------------------------------+
 ```
-`ModernVLM` uses 2x2 spatial merging to drastically reduce prefix token count and accelerate generation.
 
 ---
 
-## Part 4: Video Understanding
+## Master File Map
 
-### `embedding/video_embedding.py`
-Videos have shape $(B, C, T, H, W)$.
-`VideoPatchEmbedding` applies a 3D convolution with kernel and stride $(T_{\text{tubelet}}, P, P)$ to extract spatio-temporal tubelets spanning both time and space.
-`VideoCLIPEncoder` processes tubelets with spatio-temporal positional embeddings.
-
-### `model/video_vlm.py`
-Reads video tensors, replaces the `<video>` placeholder token in the prompt with projected tubelet tokens, and performs multi-frame temporal reasoning (action recognition, event ordering, video QA).
+| Order | File | Concept | Input Shape -> Output Shape |
+| :---: | :--- | :--- | :--- |
+| **1** | [`attention/self_attention.py`](file:///home/amanpreet/Documents/ForgeVLM/attention/self_attention.py) | Single-head scaled dot-product attention | `(B, T, D) -> (B, T, D)` |
+| **2** | [`attention/multi_head_attention.py`](file:///home/amanpreet/Documents/ForgeVLM/attention/multi_head_attention.py) | Multi-head self and cross-attention | `(B, T_q, D), (B, T_kv, D) -> (B, T_q, D)` |
+| **3** | [`attention/rope.py`](file:///home/amanpreet/Documents/ForgeVLM/attention/rope.py) | 1D, 2D (spatial), and 3D (video) Rotary Position Embeddings | Rotates Q and K heads by position |
+| **4** | [`transformer/transformer.py`](file:///home/amanpreet/Documents/ForgeVLM/transformer/transformer.py) | Pre-LN Transformer block & causal/prefix masks | `(B, T, D) -> (B, T, D)` |
+| **5** | [`embedding/patch_embedding.py`](file:///home/amanpreet/Documents/ForgeVLM/embedding/patch_embedding.py) | Conv2d patch extractor (ViT stem) | `(B, C, H, W) -> (B, N_patches, D)` |
+| **6** | [`transformer/vision_transformer.py`](file:///home/amanpreet/Documents/ForgeVLM/transformer/vision_transformer.py) | Vision Transformer classifier with [CLS] token | `(B, C, H, W) -> (B, num_classes)` |
+| **7** | [`embedding/clip.py`](file:///home/amanpreet/Documents/ForgeVLM/embedding/clip.py) | CLIP vision encoder (tokens vs class summary) | `(B, C, H, W) -> (B, 1+N, D) / (B, D)` |
+| **8** | [`embedding/token_embedding.py`](file:///home/amanpreet/Documents/ForgeVLM/embedding/token_embedding.py) | Token ID embedding + learned positions | `(B, T) -> (B, T, D)` |
+| **9** | [`transformer/text_transformer.py`](file:///home/amanpreet/Documents/ForgeVLM/transformer/text_transformer.py) | Causal text encoder with `<eos>` pooling | `(B, T) -> (B, D)` |
+| **10** | [`model/model.py`](file:///home/amanpreet/Documents/ForgeVLM/model/model.py) | Full CLIP dual-tower model | `(B, C, H, W), (B, T) -> (B, B) logits` |
+| **11** | [`loss/contrastive.py`](file:///home/amanpreet/Documents/ForgeVLM/loss/contrastive.py) | Symmetric InfoNCE contrastive cross-entropy | Pairwise similarity -> scalar loss |
+| **12** | [`loss/siglip.py`](file:///home/amanpreet/Documents/ForgeVLM/loss/siglip.py) | Pairwise sigmoid loss (Zhai et al., 2023) | Pairwise similarity -> scalar loss |
+| **13** | [`model/projector.py`](file:///home/amanpreet/Documents/ForgeVLM/model/projector.py) | Linear MLP, 2x2 Spatial Merge, Perceiver Resampler | `(B, N_vis, D_vis) -> (B, N_out, D_lang)` |
+| **14** | [`model/dynamic_resolution.py`](file:///home/amanpreet/Documents/ForgeVLM/model/dynamic_resolution.py) | AnyRes multi-crop slicing & spatial newline tokens | High-res image -> tiled patch grid |
+| **15** | [`model/language_model.py`](file:///home/amanpreet/Documents/ForgeVLM/model/language_model.py) | Causal LM with weight-tied embedding and head | `(B, T) or (B, T, D) -> (B, T, V)` |
+| **16** | [`model/vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/model/vlm.py) | Basic Vision-Language Model (LLaVA-1.0 style) | `(B, C, H, W), (B, T) -> (B, T_merged, V)` |
+| **17** | [`model/modern_vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/model/modern_vlm.py) | Modern VLM with 4x spatial merge reduction | Cuts visual tokens from 16 to 4 |
+| **18** | [`embedding/video_embedding.py`](file:///home/amanpreet/Documents/ForgeVLM/embedding/video_embedding.py) | 3D tubelet convolutions for spatio-temporal video | `(B, C, T, H, W) -> (B, N_tubelets, D)` |
+| **19** | [`model/video_vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/model/video_vlm.py) | Video VLM for action reasoning & video QA | `(B, C, T, H, W), (B, T) -> (B, T_merged, V)` |
+| **20** | [`embedding/vq.py`](file:///home/amanpreet/Documents/ForgeVLM/embedding/vq.py) | Vector Quantizer with Straight-Through Estimator (STE) | `(B, D, H, W) -> discrete codebook indices` |
+| **21** | [`model/vqvae.py`](file:///home/amanpreet/Documents/ForgeVLM/model/vqvae.py) | VQ-VAE: image to discrete token grid and back | Pixels <---> Discrete codebook tokens |
+| **22** | [`loss/vq_loss.py`](file:///home/amanpreet/Documents/ForgeVLM/loss/vq_loss.py) | Reconstruction MSE + codebook commitment loss | Scalar loss |
+| **23** | [`model/generative_vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/model/generative_vlm.py) | Unified autoregressive multimodal generator (Chameleon) | Text prompt -> visual tokens -> RGB image |
+| **24** | [`model/flow_matching.py`](file:///home/amanpreet/Documents/ForgeVLM/model/flow_matching.py) | Continuous visual generation via Flow Matching (DiT) | Latent noise + text cond -> image latent |
+| **25** | [`loss/next_token.py`](file:///home/amanpreet/Documents/ForgeVLM/loss/next_token.py) | Causal next-token prediction loss with `-100` masking | `logits[:, :-1], labels[:, 1:] -> scalar` |
+| **26** | [`data/tokens.py`](file:///home/amanpreet/Documents/ForgeVLM/data/tokens.py) | Special tokens (`<image>`, `<video>`, `<boi>`, `<eoi>`) | Token definitions & chat helpers |
+| **27** | [`data/tokenizer.py`](file:///home/amanpreet/Documents/ForgeVLM/data/tokenizer.py) | Self-contained character and special token tokenizer | `encode()` and `decode()` |
+| **28** | [`data/dataset.py`](file:///home/amanpreet/Documents/ForgeVLM/data/dataset.py) | Procedural synthetic shape & animated video datasets | Clean paired multimodal training batches |
+| **29** | [`train/train_clip.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_clip.py) | CLIP & SigLIP memorization script | Loss falls to near 0 |
+| **30** | [`train/train_vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_vlm.py) | Basic VLM memorization & text generation script | Loss falls to near 0 |
+| **31** | [`train/train_modern_vlm.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_modern_vlm.py) | Modern VLM with 4x spatial merge compression | Verified 4x token length savings |
+| **32** | [`train/train_video.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_video.py) | Video VLM temporal reasoning script | Verifies motion direction QA |
+| **33** | [`train/train_vqvae.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_vqvae.py) | VQ-VAE discrete visual codebook training | Verifies image pixel reconstruction |
+| **34** | [`train/train_generation.py`](file:///home/amanpreet/Documents/ForgeVLM/train/train_generation.py) | Text-to-image autoregressive generation script | Text prompt -> visual tokens -> decoded image |
 
 ---
 
-## Part 5: Visual Generation (Images & Videos)
+## Detailed Step-by-Step Curriculum
 
-Modern multimodal models generate visuals using two main paradigms:
+### Stage 1: Attention & Transformers from Scratch
 
-### Paradigm A: Discrete Token Generation (Chameleon / Show-o / Parti)
-Visuals are represented as discrete tokens from a learned codebook, allowing the language model to generate text and images using the exact same next-token prediction loss!
-- `embedding/vq.py`: `VectorQuantizer` maps continuous latents to discrete codebook vectors using Euclidean distance and the Straight-Through Estimator (STE).
-- `model/vqvae.py`: `VQVAE` downsamples images into a 2D discrete token grid and decodes discrete tokens back into RGB pixels.
-- `model/generative_vlm.py`: Unified vocabulary where text IDs are $[0 \dots V_{\text{text}}-1]$ and visual IDs are $[V_{\text{text}} \dots V_{\text{text}} + K - 1]$.
-  When prompted with `[..., ASSISTANT, <boi>]`, the model autoregressively predicts visual tokens until `<eoi>`, which are decoded to an image.
+#### 1. Self-Attention (`attention/self_attention.py`)
+- **The Core Intuition**: Instead of processing tokens in isolation, attention computes how much every token should "look at" every preceding token.
+- **The Three Roles**:
+  - $Q$ (Query): What am I looking for?
+  - $K$ (Key): What do I contain?
+  - $V$ (Value): What information do I pass along?
+- **The Formula**:
+  $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
+- **Causal Mask ($M$)**: Lower-triangular matrix filled with $0.0$ for past tokens and $-\infty$ for future tokens. This ensures token $t$ cannot cheat by looking at token $t+1$.
 
-### Paradigm B: Continuous Flow Matching (Transfusion / DiT)
-- `model/flow_matching.py`: Given conditioning embeddings from the multimodal model and a noisy latent $x_t$ at time $t \in [0, 1]$, predicts the velocity vector $v_t = x_1 - x_0$.
-  Generates samples using an Euler ODE integrator from $t=0$ to $t=1$.
+#### 2. Multi-Head Attention (`attention/multi_head_attention.py`)
+- Why split into heads? A single attention head can only attend to one relationship at a time (e.g. adjacent words). Multiple heads allow the model to attend to syntax, position, color, and object boundaries in parallel.
+- Supports **Cross-Attention**: queries come from sequence $A$, keys and values come from sequence $B$.
+
+#### 3. Rotary Position Embeddings - RoPE (`attention/rope.py`)
+- Modern LLMs (Llama 3, Qwen 2) and modern VLMs (Qwen2-VL) discard learned absolute position lookup tables.
+- Instead, RoPE rotates the Query and Key vectors in complex 2D planes according to their position index:
+  $$\mathbf{R}_{\Theta, m} \mathbf{x} = \mathbf{x} \cos(m \theta) + \tilde{\mathbf{x}} \sin(m \theta)$$
+- **2D Spatial RoPE**: Splits the head dimension into $(h, w)$ halves to rotate image patches by their 2D grid coordinates.
+- **3D Spatio-Temporal RoPE**: Splits the head dimension into $(t, h, w)$ thirds to rotate video tubelets across time, height, and width.
 
 ---
 
-## Part 6: Tokenizer & Datasets
+### Stage 2: Vision Encoders & Contrastive Alignment
 
-- `data/tokenizer.py`: Self-contained character-level tokenizer with multimodal special tokens (`<image>`, `<video>`, `<boi>`, `<eoi>`, `<bos>`, `<eos>`).
-- `data/dataset.py`: Synthetic procedural generation of geometric shapes (circles, squares, triangles, crosses) in different colors with natural text captions, plus animated video sequences.
+#### 4. Patch Embedding (`embedding/patch_embedding.py`)
+- How do we turn a 2D image into 1D tokens?
+- A `nn.Conv2d` with `kernel_size = patch_size` and `stride = patch_size` acts as a non-overlapping patch cutter:
+  $$\text{Image } (B, 3, 32, 32) \xrightarrow{\text{patch\_size}=8} (B, 64, 4, 4) \xrightarrow{\text{flatten}} (B, 16, 64)$$
+- A 32x32 image becomes a sequence of 16 tokens, each representing an 8x8 image patch.
+
+#### 5. Vision Transformer - ViT (`transformer/vision_transformer.py`)
+- Prepends a learnable `[CLS]` class token to the 16 patches (sequence length becomes $1 + 16 = 17$).
+- Adds positional embeddings so the transformer knows patch layout.
+- Processes the sequence through bidirectional transformer blocks.
+- The `[CLS]` token at index 0 gathers information from all patches to perform classification.
+
+#### 6. CLIP Dual Towers (`model/model.py`, `loss/contrastive.py`)
+- Two encoders: `CLIPEncoder` (image tower) and `TextTransformer` (text tower).
+- Both project their output into a shared dimension (e.g., 32) and **L2-normalize** them to length 1.0.
+- Dot product = Cosine similarity in $[-1.0, 1.0]$.
+- **Symmetric Contrastive Loss**: Image $i$ must pick text $i$ out of the batch, AND text $i$ must pick image $i$.
+
+#### 7. SigLIP: The Modern Contrastive Loss (`loss/siglip.py`)
+- Standard CLIP computes a softmax across the entire batch row. This couples all devices and requires huge batch sizes ($>30\text{k}$) to provide enough negatives.
+- **SigLIP** (Google DeepMind, 2023) replaces the softmax with independent binary sigmoid decisions for every pair:
+  $$\mathcal{L} = -\frac{1}{B} \sum_{i=1}^B \sum_{j=1}^B \log \sigma\left( y_{ij} \cdot (\exp(t) \cdot (\mathbf{u}_i \cdot \mathbf{v}_j) + b) \right)$$
+  where $y_{ij} = +1$ for matching pairs and $-1$ for non-matching pairs.
 
 ---
 
-## Running the Training Verifications
+### Stage 3: Vision-Language Models (Understanding Images)
 
-Each training script verifies a milestone by memorizing a batch:
+#### 8. Projectors: Connecting Vision to Language (`model/projector.py`)
+- Vision encoders output vectors of width $D_{\text{vision}}$ (e.g. 64). Language models expect vectors of width $D_{\text{lang}}$ (e.g. 64 or 4096).
+- **Linear MLP**: 2-layer MLP (`Linear -> GELU -> Linear`).
+- **2x2 SpatialMergeProjector** (LLaVA-NeXT, Qwen2-VL, InternVL):
+  - At high resolution, visual tokens become enormous.
+  - Groups each $2 \times 2$ neighborhood of patches into 1 vector of width $4 \cdot D$ (pixel unshuffle) before projection.
+  - **Reduces token count by $4\times$** (e.g. 16 patches $\rightarrow$ 4 visual tokens) while preserving all sub-pixel detail!
+- **PerceiverResampler** (Flamingo, BLIP-2): Fixed number of query tokens cross-attend to visual tokens.
+
+#### 9. Splicing Visual Tokens into Text (`model/vlm.py`)
+```
+Prompt: [BOS, USER, <image>, "What", "shape?", ASSISTANT]
+Vision: [patch_1, patch_2, ..., patch_16]
+
+Spliced Sequence:
+[BOS, USER] + [patch_1, ..., patch_16] + ["What", "shape?", ASSISTANT] + [Answer, EOS]
+```
+- In `expand_labels`, target labels for prompt and image positions are set to `-100`.
+- PyTorch's `F.cross_entropy(..., ignore_index=-100)` ignores these positions, ensuring the loss only trains the model to predict the assistant's answer!
+
+---
+
+### Stage 4: Video Understanding
+
+#### 10. 3D Spatio-Temporal Tubelets (`embedding/video_embedding.py`)
+- Video tensors have 5 dimensions: $(B, C, T, H, W)$.
+- Instead of processing each frame independently with 2D convs, a **3D convolution** with `kernel_size = stride = (tubelet_time, patch_size, patch_size)` extracts tubelets that fuse time and space simultaneously!
+  $$\text{Video } (B, 3, 4, 32, 32) \xrightarrow{T_{\text{tubelet}}=2, P=8} (B, 64, 2, 4, 4) \xrightarrow{\text{flatten}} (B, 32, 64)$$
+- A 4-frame 32x32 video becomes 32 spatio-temporal tokens.
+
+#### 11. Video-Language Modeling (`model/video_vlm.py`)
+- Replaces the `<video>` placeholder token in the prompt with projected tubelet tokens.
+- The causal language model attends across the tubelet sequence and performs temporal reasoning (e.g. recognizing direction of motion across time).
+
+---
+
+### Stage 5: Multimodal Generation
+
+#### 12. Discrete Visual Tokenization: VQ-VAE (`embedding/vq.py`, `model/vqvae.py`)
+- How can an autoregressive language model generate images?
+- An image is continuous pixels, but an LLM predicts discrete token IDs from a vocabulary.
+- **Solution (Vector Quantization)**:
+  1. An Encoder downsamples the image $4\times$ into a spatial latent grid: $(B, C, 32, 32) \rightarrow (B, D, 8, 8)$.
+  2. For each latent vector, the **Codebook** finds the nearest discrete embedding index $k \in \{0, \dots, K-1\}$.
+  3. The Straight-Through Estimator (STE) copies gradients from decoder to encoder.
+  4. The Decoder upsamples the discrete codebook vectors back into RGB pixels.
+- The 2D image is now an $8 \times 8 = 64$ sequence of integer token IDs, just like words in a sentence!
+
+#### 13. Unified Generative VLM (`model/generative_vlm.py`)
+- Uses a unified vocabulary:
+  - Text tokens: IDs $[0 \dots V_{\text{text}}-1]$
+  - Visual codebook tokens: IDs $[V_{\text{text}} \dots V_{\text{text}} + K - 1]$
+- When asked to generate an image:
+  ```
+  Input Prompt:  [BOS, USER, "Generate red square", ASSISTANT, <boi>]
+  Model Output:  [img_tok_1, img_tok_2, ..., img_tok_64, <eoi>]
+  ```
+- The generated visual tokens are fed directly into `vqvae.decode_from_indices(...)` to synthesize the RGB image!
+
+#### 14. Continuous Flow Matching (`model/flow_matching.py`)
+- Used by continuous diffusion/flow models (Transfusion, DiT, Stable Diffusion 3).
+- Conditions on transformer text representations to predict the linear velocity field $v_t = x_1 - x_0$.
+- Uses Euler ODE sampling from $t=0$ (pure noise) to $t=1$ (clean image).
+
+---
+
+## The "Falling Loss" Principle
+
+Every training script in ForgeVLM follows the **memorization principle**:
+> *If a model cannot memorize a small, fixed batch of 4 to 8 examples down to near-zero loss, its internal wiring, gradient flow, or shapes are broken.*
+
+Run all verification scripts to test your build:
 
 ```bash
 # 1. CLIP & SigLIP image-text contrastive alignment
+# Expected: CLIP loss falls from ~2.9 -> 0.004; SigLIP falls from ~9.2 -> 0.14
 python -m train.train_clip
 
-# 2. Basic Vision-Language Model image QA
+# 2. Vision-Language Model image understanding
+# Expected: VLM loss falls from ~44.9 -> 0.0003; generated text matches ground truth
 python -m train.train_vlm
 
-# 3. Modern VLM with 4x spatial merge compression
+# 3. Modern VLM with 4x spatial merge reduction
+# Expected: Modern VLM loss falls from ~42.9 -> 0.0002 with 4x shorter sequence length
 python -m train.train_modern_vlm
 
-# 4. Video VLM multi-frame temporal reasoning
+# 4. Video VLM temporal reasoning
+# Expected: Video loss falls from ~37.3 -> 0.22; generates exact motion answers
 python -m train.train_video
 
-# 5. VQ-VAE discrete visual codebook reconstruction
+# 5. VQ-VAE discrete codebook reconstruction
+# Expected: VQ-VAE loss falls from ~0.18 -> 0.07; pixel reconstruction matches
 python -m train.train_vqvae
 
-# 6. Unified Generative VLM text-to-image autoregressive generation
+# 6. Unified Generative VLM text-to-image generation
+# Expected: Gen loss falls from ~18.2 -> 0.0002; generates visual tokens and decodes RGB image
 python -m train.train_generation
 ```
